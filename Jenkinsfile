@@ -3,19 +3,19 @@ pipeline {
   stages {
     stage('restore') {
       steps {
-        bat(script: 'dotnet restore', returnStatus: true)
+        sh 'dotnet restore'
       }
     }
 
-    stage('') {
+    stage('Build') {
       steps {
-        bat(script: 'dotnet build', returnStatus: true)
+        sh 'dotnet build'
       }
     }
 
-    stage('Test') {
+    stage('test') {
       steps {
-        bat 'dotnet test'
+        sh 'dotnet test'
       }
     }
 
