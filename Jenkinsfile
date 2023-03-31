@@ -1,73 +1,89 @@
 pipeline {
-    agent {
-        node {
-            label 'windows'
-            // Set the path to the .NET SDK on the agent
-            // You may need to adjust this based on your environment
-            tool 'dotnet-sdk-6.0.100-preview.7.21379.14-x64'
-        }
+    agent { label 'windows' }
+    
+    environment {
+        MSBUILD_PATH = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise\\MSBuild\\Current\\Bin"
     }
+    
     stages {
-        stage('Checkout') {
+        stage('Clean Workspace') {
             steps {
-                // Checkout the code from the Git repository
-                git 'https://github.com/abuadil/dotnet-webapi-boilerplate.git'
+                deleteDir()
             }
         }
-        stage('Restore packages') {
+        
+        stage('Checkout Code') {
             steps {
-                // Restore NuGet packages
-                bat 'dotnet restore'
+                checkout([$class: 'GitSCM', 
+                          branches: [[name: 'main']], 
+                          doGenerateSubmoduleConfigurations: false, 
+                          extensions: [], 
+                          submoduleCfg: [], 
+                          userRemoteConfigs: [[url: 'https://github.com/abuadil/dotnet-webapi-boilerplate.git']]])
             }
         }
-        stage('Clean') {
+        
+        stage('Restore Packages') {
             steps {
-                // Clean the workspace
-                bat 'dotnet clean'
+                bat "\"C:\\Program Files\\dotnet\\dotnet.exe\" restore"
             }
         }
-        stage('Increase version') {
+        
+        stage('Increase Version') {
             steps {
-                // Increase the version number in the AssemblyInfo.cs file
-                bat 'dotnet build /version-suffix $BUILD_NUMBER'
+                bat "dotnet tool install -g dotnet-version-cli"
+                bat "dotnet-version newpatch"
             }
         }
+        
         stage('Build') {
             steps {
-                // Build the project
-                bat 'dotnet build --configuration Release'
+                bat "\"$env:MSBUILD_PATH\\MSBuild.exe\" FSH.WebApi.sln /t:Build /p:Configuration=Release"
             }
         }
-        stage('Run unit tests') {
+        
+        stage('Unit Tests') {
             steps {
-                // Run unit tests and generate a coverage report in Cobertura format
-                bat 'dotnet test /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura'
-            }
-            post {
-                always {
-                    // Convert the Cobertura report to XML format
-                    bat 'dotnet tool install -g dotnet-reportgenerator-globaltool'
-                    bat 'reportgenerator "-reports:**/coverage.cobertura.xml" "-targetdir:coverage"'
-                }
+                bat "\"$env:MSBUILD_PATH\\MSBuild.exe\" FSH.WebApi.sln /t:VSTest /p:Configuration=Release /p:CollectCoverage=true /p:CoverletOutputFormat=opencover"
             }
         }
-        stage('Publish HTML report') {
+        
+        stage('Convert Coverage Report') {
             steps {
-                // Publish the HTML coverage report as a build artifact
-                publishHTML([allowMissing: false, alwaysLinkToLastBuild: true, keepAll: true, reportDir: 'coverage', reportFiles: 'index.htm', reportName: 'Code Coverage Report'])
+                bat "dotnet tool install -g coverlet.console"
+                bat "coverlet MyProject.Tests.dll --target dotnet --targetargs \"test MyProject.Tests.dll --no-build\" --format opencover"
             }
         }
-        stage('Archive artifacts') {
+        
+        stage('Generate Coverage Report') {
             steps {
-                // Archive the built application as a build artifact
-                archiveArtifacts '**/bin/Release/**'
+                bat "dotnet tool install -g reportgenerator"
+                bat "reportgenerator -reports:coverage.opencover.xml -targetdir:coveragereport -reporttypes:Html"
             }
         }
-        stage('Deploy artifacts') {
+        
+        stage('Publish Coverage Report') {
             steps {
-                // Deploy the built application to a remote server using SCP
-                sshPublisher(publishers: [sshPublisherDesc(configName: 'myserver', transfers: [sshTransfer(execCommand: 'sudo systemctl stop myservice', execTimeout: 120000), sshTransfer(execCommand: 'mkdir -p /path/to/deploy', execTimeout: 120000), sshTransfer(execCommand: 'scp -r ./bin/Release user@myserver:/path/to/deploy', execTimeout: 120000), sshTransfer(execCommand: 'sudo systemctl start myservice', execTimeout: 120000)], usePromotionTimestamp: false, useWorkspaceInPromotion: false, verbose: true)])
+                publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: true, reportDir: 'coveragereport', reportFiles: 'index.htm', reportName: 'Code Coverage Report'])
             }
+        }
+        
+        stage('Archive Artifacts') {
+            steps {
+                archiveArtifacts artifacts: '**/bin/Release/*.dll, **/bin/Release/*.pdb, **/coveragereport/**'
+            }
+        }
+        
+        stage('Deploy Artifacts') {
+            steps {
+                bat 'scp -r **/* user@remote:/path/to/deployment'
+            }
+        }
+    }
+    
+    post {
+        always {
+            cleanWs()
         }
     }
 }
