@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using NJsonSchema.Generation.TypeMappers;
 using NSwag;
 using NSwag.AspNetCore;
@@ -15,11 +16,21 @@ internal static class Startup
     internal static IServiceCollection AddOpenApiDocumentation(this IServiceCollection services, IConfiguration config)
     {
         var settings = config.GetSection(nameof(SwaggerSettings)).Get<SwaggerSettings>();
+        if (settings == null) return services;
         if (settings.Enable)
         {
             services.AddVersionedApiExplorer(o => o.SubstituteApiVersionInUrl = true);
             services.AddEndpointsApiExplorer();
-            services.AddOpenApiDocument((document, serviceProvider) =>
+
+            services.AddScoped<FluentValidationSchemaProcessor>(provider =>
+            {
+                var validationRules = provider.GetService<IEnumerable<FluentValidationRule>>();
+                var loggerFactory = provider.GetService<ILoggerFactory>();
+
+                return new FluentValidationSchemaProcessor(provider, validationRules, loggerFactory);
+            });
+
+            _ = services.AddOpenApiDocument((document, serviceProvider) =>
             {
                 document.PostProcess = doc =>
                 {
@@ -54,7 +65,7 @@ internal static class Startup
                                 TokenUrl = config["SecuritySettings:Swagger:TokenUrl"],
                                 Scopes = new Dictionary<string, string>
                                 {
-                                    { config["SecuritySettings:Swagger:ApiScope"], "access the api" }
+                                    { config["SecuritySettings:Swagger:ApiScope"]!, "access the api" }
                                 }
                             }
                         }
@@ -89,7 +100,6 @@ internal static class Startup
                 var fluentValidationSchemaProcessor = serviceProvider.CreateScope().ServiceProvider.GetService<FluentValidationSchemaProcessor>();
                 document.SchemaProcessors.Add(fluentValidationSchemaProcessor);
             });
-            services.AddScoped<FluentValidationSchemaProcessor>();
         }
 
         return services;
